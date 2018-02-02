@@ -1,0 +1,959 @@
+From c4ae4ed0f3219c2cffcd9fdaf4a9126ddaedf11a Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 12:43:01 -0600
+Subject: [PATCH 01/15] Gemlist update
+
+---
+ Gemfile      | 2 +-
+ Gemfile.lock | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/Gemfile b/Gemfile
+index 6d0fe86..5f44bea 100644
+--- a/Gemfile
++++ b/Gemfile
+@@ -1,7 +1,7 @@
+ source 'https://rubygems.org'
+ 
+ # Bundle edge Rails instead: gem 'rails', github: 'rails/rails'
+-gem 'rails', '~> 4.2.4'
++gem 'rails', '~> 4.2.5'
+ 
+ gem 'foreman'
+ 
+diff --git a/Gemfile.lock b/Gemfile.lock
+index 57d8cbf..de6e365 100644
+--- a/Gemfile.lock
++++ b/Gemfile.lock
+@@ -177,7 +177,7 @@ DEPENDENCIES
+   foreman
+   megatron
+   pg
+-  rails (~> 4.2.4)
++  rails (~> 4.2.5)
+   rspec-rails
+   slim-rails
+   spring
+@@ -185,4 +185,4 @@ DEPENDENCIES
+   virtus
+ 
+ BUNDLED WITH
+-   1.10.6
++   1.11.2
+-- 
+2.6.4
+
+
+From a00e9c64b8259cfd029698ccf96b38b712061c0b Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 12:48:51 -0600
+Subject: [PATCH 02/15] Passes database controller tests  - Missing response
+ handling for fetching a deployment and pulling its databases
+
+---
+ app/controllers/postgresql/databases_controller.rb       |  4 +++-
+ app/models/deployment.rb                                 | 10 ++++++++--
+ spec/controllers/postgresql/databases_controller_spec.rb |  5 +++++
+ 3 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/app/controllers/postgresql/databases_controller.rb b/app/controllers/postgresql/databases_controller.rb
+index 7fd1d0d..773f2c3 100644
+--- a/app/controllers/postgresql/databases_controller.rb
++++ b/app/controllers/postgresql/databases_controller.rb
+@@ -1,7 +1,9 @@
+ class PostgreSQL::DatabasesController < PostgreSQL::BaseController
+ 
+   def index
+-    render locals: {databases: current_deployment.databases}
++    deployment = current_deployment or return head :not_found
++
++    render locals: {databases: deployment.databases}
+   end
+ 
+   def current_database
+diff --git a/app/models/deployment.rb b/app/models/deployment.rb
+index 62cd9f9..de09f68 100644
+--- a/app/models/deployment.rb
++++ b/app/models/deployment.rb
+@@ -13,8 +13,14 @@ class Deployment
+ 
+   def self.find(id)
+     response = Faraday.get("#{ENV['API_URL']}/deployments/#{id}")
+-    body = JSON.parse(response.body)
+-    class_by_type(body['type']).new(body)
++
++    if response.success?
++      body = JSON.parse(response.body)
++
++      body['port'] = 5432
++
++      class_by_type(body['type']).new(body)
++    end
+   end
+ 
+   def self.class_by_type(type)
+diff --git a/spec/controllers/postgresql/databases_controller_spec.rb b/spec/controllers/postgresql/databases_controller_spec.rb
+index 81aa7a2..358ba6e 100644
+--- a/spec/controllers/postgresql/databases_controller_spec.rb
++++ b/spec/controllers/postgresql/databases_controller_spec.rb
+@@ -3,6 +3,11 @@ require 'rails_helper'
+ RSpec.describe PostgreSQL::DatabasesController, type: :controller do
+ 
+   describe 'GET index' do
++    context 'existent deployment' do
++      before { get :index, account_slug: 'nice-co', deployment_id: 1234 }
++      it { expect(response.status).to eq(200) }
++    end
++
+     context 'inexistent deployment' do
+       before { get :index, account_slug: 'nice-co', deployment_id: 12345 }
+       it { expect(response.status).to eq(404) }
+-- 
+2.6.4
+
+
+From 56144f7322e5310b70b2e7338203185e2f2b1336 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 12:57:20 -0600
+Subject: [PATCH 03/15] Renamed model 'table' to 'database_table' to avoid name
+ conflict with existing pg:: module   - Updated database model to reflect it
+
+---
+ app/models/postgresql/database.rb       | 2 +-
+ app/models/postgresql/database_table.rb | 9 +++++++++
+ app/models/postgresql/table.rb          | 9 ---------
+ 3 files changed, 10 insertions(+), 10 deletions(-)
+ create mode 100644 app/models/postgresql/database_table.rb
+ delete mode 100644 app/models/postgresql/table.rb
+
+diff --git a/app/models/postgresql/database.rb b/app/models/postgresql/database.rb
+index 228483f..de8388f 100644
+--- a/app/models/postgresql/database.rb
++++ b/app/models/postgresql/database.rb
+@@ -21,7 +21,7 @@ class PostgreSQL::Database
+       ORDER BY reltuples DESC;
+     eos
+     ).map do |row|
+-      PostgreSQL::Table.new(name: row['relname'], rows_count: row['reltuples'], database: self, deployment: deployment)
++      PostgreSQL::DatabaseTable.new(name: row['relname'], schema: row['schemaname'], rows_count: row['reltuples'], database: self, deployment: deployment)
+     end
+   end
+ 
+diff --git a/app/models/postgresql/database_table.rb b/app/models/postgresql/database_table.rb
+new file mode 100644
+index 0000000..fc95246
+--- /dev/null
++++ b/app/models/postgresql/database_table.rb
+@@ -0,0 +1,9 @@
++class PostgreSQL::DatabaseTable
++  include Virtus.model
++
++  attribute :database, PostgreSQL::Database
++  attribute :deployment, PostgreSQL::Deployment
++
++  attribute :name, String
++
++end
+\ No newline at end of file
+diff --git a/app/models/postgresql/table.rb b/app/models/postgresql/table.rb
+deleted file mode 100644
+index 813f0d6..0000000
+--- a/app/models/postgresql/table.rb
++++ /dev/null
+@@ -1,9 +0,0 @@
+-class PostgreSQL::Table
+-  include Virtus.model
+-
+-  attribute :database, PostgreSQL::Database
+-  attribute :deployment, PostgreSQL::Deployment
+-
+-  attribute :name, String
+-
+-end
+\ No newline at end of file
+-- 
+2.6.4
+
+
+From d20f77a64dace3212bcbfe2a086fbe4dce58a7eb Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 12:59:25 -0600
+Subject: [PATCH 04/15] Added table_column model
+
+---
+ app/models/postgresql/table_column.rb | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+ create mode 100644 app/models/postgresql/table_column.rb
+
+diff --git a/app/models/postgresql/table_column.rb b/app/models/postgresql/table_column.rb
+new file mode 100644
+index 0000000..92b8aab
+--- /dev/null
++++ b/app/models/postgresql/table_column.rb
+@@ -0,0 +1,8 @@
++class PostgreSQL::TableColumn
++  include Virtus.model
++
++  attribute :table, PostgreSQL::DatabaseTable
++  attribute :name, String
++  attribute :data_type, String
++
++end
+\ No newline at end of file
+-- 
+2.6.4
+
+
+From 5f59180463ff4360e7d07e800b5468cb326f0038 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 13:02:08 -0600
+Subject: [PATCH 05/15] Added fetching columns information with schema support
+ for database table model
+
+---
+ app/models/postgresql/database_table.rb | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/app/models/postgresql/database_table.rb b/app/models/postgresql/database_table.rb
+index fc95246..a4b0dbf 100644
+--- a/app/models/postgresql/database_table.rb
++++ b/app/models/postgresql/database_table.rb
+@@ -2,8 +2,24 @@ class PostgreSQL::DatabaseTable
+   include Virtus.model
+ 
+   attribute :database, PostgreSQL::Database
+-  attribute :deployment, PostgreSQL::Deployment
+-
++  attribute :schema, String
+   attribute :name, String
++  attribute :rows_count, String
++
++  def columns
++    database.client.exec_params('SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
++                                [schema, name]).map do |row|
++      PostgreSQL::TableColumn.new(name: row['column_name'], data_type: row['data_type'], table: self)
++    end
++  end
++
++  def schema_name
++    schema == 'public' ? name : "#{schema}.#{name}"
++  end
++
++  def default_schema
++    schema == 'public' ? nil : schema
++  end
++
+ 
+ end
+\ No newline at end of file
+-- 
+2.6.4
+
+
+From 91f4a6464a40615b0958a56e2120351b234937b4 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 13:07:00 -0600
+Subject: [PATCH 06/15] Added table/show  - Route  - Contoller method  - View
+
+Added table/index controller error handling for invalid pg connection
+ - Updated view for table details and header breadcrumb for the current path
+---
+ app/controllers/postgresql/tables_controller.rb | 20 ++++++++++++++++++++
+ app/views/postgresql/databases/_header.slim     |  5 ++++-
+ app/views/postgresql/tables/index.html.slim     |  6 ++++--
+ app/views/postgresql/tables/show.html.slim      | 16 ++++++++++++++++
+ config/routes.rb                                |  2 +-
+ 5 files changed, 45 insertions(+), 4 deletions(-)
+ create mode 100644 app/views/postgresql/tables/show.html.slim
+
+diff --git a/app/controllers/postgresql/tables_controller.rb b/app/controllers/postgresql/tables_controller.rb
+index 85836b0..ea63aec 100644
+--- a/app/controllers/postgresql/tables_controller.rb
++++ b/app/controllers/postgresql/tables_controller.rb
+@@ -1,7 +1,27 @@
+ class PostgreSQL::TablesController < PostgreSQL::BaseController
+ 
++  helper_method :current_table
++
+   def index
+     render locals: {tables: current_database.tables}
++
++  rescue PG::ConnectionBad
++    head :not_found
++  end
++
++  def show
++    @current_table = PostgreSQL::DatabaseTable.new(name: params[:table_name],
++                                                   schema: params[:schema] || 'public',
++                                                   database: current_database)
++
++    render locals: {table: current_table,
++                    columns: current_table.columns}
++  end
++
++  private
++
++  def current_table
++    @current_table
+   end
+ 
+ end
+\ No newline at end of file
+diff --git a/app/views/postgresql/databases/_header.slim b/app/views/postgresql/databases/_header.slim
+index 300c641..266906f 100644
+--- a/app/views/postgresql/databases/_header.slim
++++ b/app/views/postgresql/databases/_header.slim
+@@ -2,4 +2,7 @@
+   h2
+     - breadcrumbs do |b|
+       = b.crumb current_deployment.name, postgresql_databases_path
+-      = b.crumb current_database.name, postgresql_database_tables_path
+\ No newline at end of file
++      = b.crumb current_database.name, postgresql_database_tables_path
++
++      - if current_table
++        = b.crumb current_table.schema + '.' + current_table.name
+diff --git a/app/views/postgresql/tables/index.html.slim b/app/views/postgresql/tables/index.html.slim
+index bb44f4d..8ce8cc4 100644
+--- a/app/views/postgresql/tables/index.html.slim
++++ b/app/views/postgresql/tables/index.html.slim
+@@ -8,7 +8,9 @@
+     .box-table
+       .table-head
+         .table-row
+-          .table-cell name
++          .table-cell Name
++          .table-cell Rows
+       - tables.each do |table|
+         .table-row
+-          .table-cell = table.name
+\ No newline at end of file
++          .table-cell = link_to table.schema_name, postgresql_database_table_path(table_name: table.name, schema: table.default_schema)
++          .table-cell = table.rows_count
+\ No newline at end of file
+diff --git a/app/views/postgresql/tables/show.html.slim b/app/views/postgresql/tables/show.html.slim
+new file mode 100644
+index 0000000..fa90c64
+--- /dev/null
++++ b/app/views/postgresql/tables/show.html.slim
+@@ -0,0 +1,16 @@
++= render partial: 'postgresql/databases/header'
++= render partial: 'postgresql/databases/nav'
++
++- main_header 'Columns'
++
++- main
++  .wide
++    .box-table
++      .table-head
++        .table-row
++          .table-cell Name
++          .table-cell Data Type
++      - columns.each do |column|
++        .table-row
++          .table-cell = column.name
++          .table-cell = column.data_type
+\ No newline at end of file
+diff --git a/config/routes.rb b/config/routes.rb
+index 1ae4fd2..67e635b 100644
+--- a/config/routes.rb
++++ b/config/routes.rb
+@@ -5,7 +5,7 @@ Rails.application.routes.draw do
+   scope '/:account_slug/deployments/:deployment_id' do
+     namespace :postgresql do
+       resources :databases, param: :name, only: [:index] do
+-        resources :tables, only: [:index]
++        resources :tables, param: :table_name, only: [:index, :show]
+       end
+     end
+   end
+-- 
+2.6.4
+
+
+From 4e6b2e1dbb8b6aaaa9347a1c9ed0305825791a9f Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Mon, 11 Jan 2016 13:11:19 -0600
+Subject: [PATCH 07/15] Passing test for tables controller
+
+---
+ spec/controllers/postgresql/tables_controller_spec.rb | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/spec/controllers/postgresql/tables_controller_spec.rb b/spec/controllers/postgresql/tables_controller_spec.rb
+index b0806f6..94bd688 100644
+--- a/spec/controllers/postgresql/tables_controller_spec.rb
++++ b/spec/controllers/postgresql/tables_controller_spec.rb
+@@ -3,6 +3,11 @@ require 'rails_helper'
+ RSpec.describe PostgreSQL::TablesController, type: :controller do
+ 
+   describe 'GET index' do
++    context 'existent database' do
++      before { get :index, account_slug: 'nice-co', deployment_id: 1234, database_name: 'booktown' }
++      it { expect(response.status).to eq(200) }
++    end
++
+     context 'inexistent database' do
+       before { get :index, account_slug: 'nice-co', deployment_id: 1234, database_name: 'hello' }
+       it { expect(response.status).to eq(404) }
+-- 
+2.6.4
+
+
+From 8492ec3410114a61f8d0e6e5062da1a1773a534f Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 14:44:45 -0600
+Subject: [PATCH 08/15] Update gemlist for jQuery
+
+---
+ Gemfile      | 1 +
+ Gemfile.lock | 5 +++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/Gemfile b/Gemfile
+index 5f44bea..979553e 100644
+--- a/Gemfile
++++ b/Gemfile
+@@ -12,6 +12,7 @@ gem 'pg'
+ gem 'turbolinks'
+ gem 'megatron'
+ gem 'slim-rails'
++gem 'jquery-rails'
+ 
+ # Modeling
+ gem 'faraday'
+diff --git a/Gemfile.lock b/Gemfile.lock
+index de6e365..ed92a22 100644
+--- a/Gemfile.lock
++++ b/Gemfile.lock
+@@ -72,6 +72,10 @@ GEM
+       activesupport (>= 4.1.0)
+     i18n (0.7.0)
+     ice_nine (0.11.1)
++    jquery-rails (4.0.5)
++      rails-dom-testing (~> 1.0)
++      railties (>= 4.2.0)
++      thor (>= 0.14, < 2.0)
+     json (1.8.3)
+     loofah (2.0.3)
+       nokogiri (>= 1.5.9)
+@@ -175,6 +179,7 @@ DEPENDENCIES
+   byebug
+   faraday
+   foreman
++  jquery-rails
+   megatron
+   pg
+   rails (~> 4.2.5)
+-- 
+2.6.4
+
+
+From 21761a910e7301c6b1a4bb8d3dd7dff81b341681 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 14:46:17 -0600
+Subject: [PATCH 09/15] Missing jQuery reference in app js
+
+---
+ app/assets/javascripts/application.js | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/app/assets/javascripts/application.js b/app/assets/javascripts/application.js
+index cb5c968..0e49a26 100644
+--- a/app/assets/javascripts/application.js
++++ b/app/assets/javascripts/application.js
+@@ -1 +1,2 @@
+-//= require 'turbolinks'
+\ No newline at end of file
++//= require 'turbolinks'
++//= require jquery
+\ No newline at end of file
+-- 
+2.6.4
+
+
+From dfb9962c44943d887432e0d0ce763f7f2d2fa9e1 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 14:47:32 -0600
+Subject: [PATCH 10/15] Route for live query feature
+
+---
+ config/routes.rb | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/config/routes.rb b/config/routes.rb
+index 67e635b..6e57fdd 100644
+--- a/config/routes.rb
++++ b/config/routes.rb
+@@ -5,6 +5,7 @@ Rails.application.routes.draw do
+   scope '/:account_slug/deployments/:deployment_id' do
+     namespace :postgresql do
+       resources :databases, param: :name, only: [:index] do
++        get 'live_queries'
+         resources :tables, param: :table_name, only: [:index, :show]
+       end
+     end
+-- 
+2.6.4
+
+
+From 8775f0c46d1196badfd74b1326177957bcd4367c Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 14:57:00 -0600
+Subject: [PATCH 11/15] Minor refactoring
+
+---
+ app/controllers/postgresql/base_controller.rb | 3 +--
+ app/views/postgresql/databases/_header.slim   | 2 +-
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/app/controllers/postgresql/base_controller.rb b/app/controllers/postgresql/base_controller.rb
+index 3667407..ba0378f 100644
+--- a/app/controllers/postgresql/base_controller.rb
++++ b/app/controllers/postgresql/base_controller.rb
+@@ -3,8 +3,7 @@ class PostgreSQL::BaseController < ApplicationController
+   helper_method :current_database
+ 
+   def current_database
+-    return nil unless params[:database_name]
+-    PostgreSQL::Database.new(name: params[:database_name] || params[:name], deployment: current_deployment)
++    @current_database ||= PostgreSQL::Database.new(name: params[:database_name] || params[:name], deployment: current_deployment)
+   end
+ 
+ end
+\ No newline at end of file
+diff --git a/app/views/postgresql/databases/_header.slim b/app/views/postgresql/databases/_header.slim
+index 266906f..189d1af 100644
+--- a/app/views/postgresql/databases/_header.slim
++++ b/app/views/postgresql/databases/_header.slim
+@@ -4,5 +4,5 @@
+       = b.crumb current_deployment.name, postgresql_databases_path
+       = b.crumb current_database.name, postgresql_database_tables_path
+ 
+-      - if current_table
++      - if defined?(current_table) && current_table
+         = b.crumb current_table.schema + '.' + current_table.name
+-- 
+2.6.4
+
+
+From ef72ac74be37798038b2a6137d73a29fc5f08a03 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 14:58:22 -0600
+Subject: [PATCH 12/15] Added Query stat model
+
+---
+ app/models/postgresql/query_stat.rb | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+ create mode 100644 app/models/postgresql/query_stat.rb
+
+diff --git a/app/models/postgresql/query_stat.rb b/app/models/postgresql/query_stat.rb
+new file mode 100644
+index 0000000..fee71f8
+--- /dev/null
++++ b/app/models/postgresql/query_stat.rb
+@@ -0,0 +1,9 @@
++class PostgreSQL::QueryStat
++  include Virtus.model
++
++  attribute :pid, String
++  attribute :app_name, String
++  attribute :query_start, String
++  attribute :query, String
++
++end
+\ No newline at end of file
+-- 
+2.6.4
+
+
+From 119b14e35c89871b834e318931b2dd37ae7644ef Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 15:00:29 -0600
+Subject: [PATCH 13/15] Minor fix
+
+---
+ app/models/postgresql/database_table.rb | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/models/postgresql/database_table.rb b/app/models/postgresql/database_table.rb
+index a4b0dbf..aeea0da 100644
+--- a/app/models/postgresql/database_table.rb
++++ b/app/models/postgresql/database_table.rb
+@@ -7,7 +7,7 @@ class PostgreSQL::DatabaseTable
+   attribute :rows_count, String
+ 
+   def columns
+-    database.client.exec_params('SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
++    database.client.exec_params('SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2;',
+                                 [schema, name]).map do |row|
+       PostgreSQL::TableColumn.new(name: row['column_name'], data_type: row['data_type'], table: self)
+     end
+-- 
+2.6.4
+
+
+From cc9925516202df797dc0197815553f7868a41fa7 Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 15:02:01 -0600
+Subject: [PATCH 14/15] Feature: Live Query   - Controller method   - Views   -
+ Model update
+
+---
+ app/controllers/postgresql/databases_controller.rb | 17 ++++--
+ app/models/postgresql/database.rb                  | 22 ++++++--
+ app/views/postgresql/databases/_nav.slim           |  5 +-
+ app/views/postgresql/databases/_queries.html.slim  |  6 +++
+ .../postgresql/databases/live_queries.html.slim    | 60 ++++++++++++++++++++++
+ 5 files changed, 103 insertions(+), 7 deletions(-)
+ create mode 100644 app/views/postgresql/databases/_queries.html.slim
+ create mode 100644 app/views/postgresql/databases/live_queries.html.slim
+
+diff --git a/app/controllers/postgresql/databases_controller.rb b/app/controllers/postgresql/databases_controller.rb
+index 773f2c3..8800679 100644
+--- a/app/controllers/postgresql/databases_controller.rb
++++ b/app/controllers/postgresql/databases_controller.rb
+@@ -6,9 +6,20 @@ class PostgreSQL::DatabasesController < PostgreSQL::BaseController
+     render locals: {databases: deployment.databases}
+   end
+ 
+-  def current_database
+-    return nil unless params[:name]
+-    PostgreSQL::Database.new(name: params[:name], deployment: current_deployment)
++  def live_queries
++    new_queries = current_database.queries(params[:lq_timestamp])
++    new_timestamp = new_queries[0].query_start#.to_time.to_i
++
++    if request.xhr?
++      res = render_to_string({template: 'postgresql/databases/_queries', locals: {queries: new_queries}, layout: false})
++
++      render json: {queries: res, lq_timestamp: new_timestamp}
++    else
++      render locals: {queries: new_queries, lq_timestamp: new_timestamp}
++    end
++
++  rescue PG::ConnectionBad
++    head :not_found
+   end
+ 
+ end
+\ No newline at end of file
+diff --git a/app/models/postgresql/database.rb b/app/models/postgresql/database.rb
+index de8388f..50cc3dc 100644
+--- a/app/models/postgresql/database.rb
++++ b/app/models/postgresql/database.rb
+@@ -11,13 +11,13 @@ class PostgreSQL::Database
+ 
+   def tables
+     client.exec(<<-eos
+-      SELECT 
++      SELECT
+         nspname AS schemaname,relname,reltuples
+       FROM pg_class C
+       LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
+-      WHERE 
++      WHERE
+         nspname NOT IN ('pg_catalog', 'information_schema') AND
+-        relkind='r' 
++        relkind='r'
+       ORDER BY reltuples DESC;
+     eos
+     ).map do |row|
+@@ -25,4 +25,20 @@ class PostgreSQL::Database
+     end
+   end
+ 
++  def queries(start_timestamp)
++    qry_start = start_timestamp# && Time.at(start_timestamp.to_i).to_s(:db) rescue nil
++    qry_start_crit = qry_start ? "WHERE query_start > '#{qry_start}'" : ''
++
++    client.exec(<<-eos
++      SELECT pid, usename, application_name, query_start, query
++      FROM pg_stat_activity
++      #{qry_start_crit}
++      ORDER BY query_start DESC;
++    eos
++    ).map do |row|
++      PostgreSQL::QueryStat.new(pid: row['pid'], app_name: row['application_name'], query_start: row['query_start'], query: row['query'])
++    end
++  end
++
++
+ end
+\ No newline at end of file
+diff --git a/app/views/postgresql/databases/_nav.slim b/app/views/postgresql/databases/_nav.slim
+index 14eb874..bc43ccf 100644
+--- a/app/views/postgresql/databases/_nav.slim
++++ b/app/views/postgresql/databases/_nav.slim
+@@ -1,3 +1,6 @@
+ - secondary_nav do |nav|
+   = nav.item 'Tables', postgresql_database_tables_path,
+-    icon: 'collections'
+\ No newline at end of file
++    icon: 'collections'
++
++  = nav.item 'Live Queries', postgresql_database_live_queries_path,
++    icon: 'logs'
+\ No newline at end of file
+diff --git a/app/views/postgresql/databases/_queries.html.slim b/app/views/postgresql/databases/_queries.html.slim
+new file mode 100644
+index 0000000..abdcb4f
+--- /dev/null
++++ b/app/views/postgresql/databases/_queries.html.slim
+@@ -0,0 +1,6 @@
++- queries.each do |query|
++  .table-row
++    .table-cell = query.pid
++    .table-cell = query.query_start
++    .table-cell = query.query
++    .table-cell = query.app_name
+diff --git a/app/views/postgresql/databases/live_queries.html.slim b/app/views/postgresql/databases/live_queries.html.slim
+new file mode 100644
+index 0000000..e67fdc0
+--- /dev/null
++++ b/app/views/postgresql/databases/live_queries.html.slim
+@@ -0,0 +1,60 @@
++= render partial: 'postgresql/databases/header'
++= render partial: 'postgresql/databases/nav'
++
++- main_header
++  = hidden_field_tag 'last_query_timestamp', lq_timestamp
++  input data-toggle-class="primary-btn; .test-button" id="lq-toggle" type="checkbox" checked=true
++  label for="lq-toggle"
++  h2 style="display: inline" Live Queries
++
++- main
++  .wide
++    .box-table
++      .table-head
++        .table-row
++          .table-cell Pid
++          .table-cell Query Start
++          .table-cell Query
++          .table-cell App Name
++      .table-body#live-queries
++        = render partial: 'queries', object: queries
++
++javascript:
++  var timeout = 0;
++
++  $(document).ready(function() {
++    update_live_query();
++
++    $('#lq-toggle').click(update_live_query);
++  });
++
++  function fetch_new_queries() {
++    $.ajax({
++      url: '#{postgresql_database_live_queries_path}',
++      data: {
++        lq_timestamp: get_last_query_timestamp()
++      },
++      success: function (xhr) {
++        $(xhr.queries).prependTo('#live-queries').hide().fadeIn(2000);
++        set_last_query_timestamp(xhr.lq_timestamp);
++      },
++      complete: function() {
++        update_live_query();
++      }
++    });
++  }
++
++  function get_last_query_timestamp() {
++    return $('#last_query_timestamp').val();
++  }
++
++  function set_last_query_timestamp(val) {
++    $('#last_query_timestamp').val(val);
++  }
++
++  function update_live_query() {
++    clearTimeout(timeout);
++
++    if ($('#lq-toggle').is(':checked'))
++      timeout = setTimeout(fetch_new_queries, 3000);
++  }
+-- 
+2.6.4
+
+
+From 72c8c4bf1932e7a39f8ad16a076a9c0f2a8a48fa Mon Sep 17 00:00:00 2001
+From: Kagan Unaldi <kunaldi@gmail.com>
+Date: Wed, 13 Jan 2016 18:36:50 -0600
+Subject: [PATCH 15/15] Added some tests
+
+---
+ .../postgresql/databases_controller_spec.rb        | 21 ++++++++++
+ spec/models/postgresql/database_spec.rb            | 49 ++++++++++++++++++++++
+ spec/models/postgresql/database_table_spec.rb      | 45 ++++++++++++++++++++
+ spec/models/postgresql/deployment_spec.rb          | 20 +++++++++
+ 4 files changed, 135 insertions(+)
+ create mode 100644 spec/models/postgresql/database_spec.rb
+ create mode 100644 spec/models/postgresql/database_table_spec.rb
+ create mode 100644 spec/models/postgresql/deployment_spec.rb
+
+diff --git a/spec/controllers/postgresql/databases_controller_spec.rb b/spec/controllers/postgresql/databases_controller_spec.rb
+index 358ba6e..e40ba65 100644
+--- a/spec/controllers/postgresql/databases_controller_spec.rb
++++ b/spec/controllers/postgresql/databases_controller_spec.rb
+@@ -14,4 +14,25 @@ RSpec.describe PostgreSQL::DatabasesController, type: :controller do
+     end
+   end
+ 
++  describe 'GET live_queries' do
++    context 'non xhr request ' do
++      before { get :live_queries, account_slug: 'nice-co', deployment_id: 1234, database_name: 'booktown' }
++      it {expect(response.status).to eq(200)}
++      it {expect(response).to render_template('live_queries')}
++    end
++
++    context 'xhr request ' do
++      before { xhr :get, :live_queries, account_slug: 'nice-co', deployment_id: 1234, database_name: 'booktown' }
++
++      it 'should return status ok ' do
++        expect(response.status).to eq(200)
++      end
++
++      it 'should return a timestamp in the body' do
++        expect(response.body).to include('lq_timestamp')
++      end
++    end
++
++  end
++
+ end
+diff --git a/spec/models/postgresql/database_spec.rb b/spec/models/postgresql/database_spec.rb
+new file mode 100644
+index 0000000..4b69678
+--- /dev/null
++++ b/spec/models/postgresql/database_spec.rb
+@@ -0,0 +1,49 @@
++require 'rails_helper'
++
++RSpec.describe PostgreSQL::Database, type: :model do
++
++  before :context do
++    @db = PostgreSQL::Database.new(name: 'booktown', deployment:
++      PostgreSQL::Deployment.new(
++          type: 'postgresql',
++          host: 'localhost',
++          port: 5432,
++          name: 'funky-deployment-9',
++          account_id: 1337
++    ))
++  end
++
++
++  describe '#tables' do
++
++    before :context do
++      @tables = @db.tables
++    end
++
++    it 'should return table information of a database in Array' do
++      expect(@tables).to be_an Array
++    end
++
++    it 'should include books table for the booktown sample db' do
++      expect(@tables.map(&:name)).to include 'books'
++    end
++
++  end
++
++
++  describe '#queries' do
++
++    it 'should return all query stats of a database in Array' do
++      expect(@db.queries(nil)).to be_an Array
++    end
++
++    it 'should return only new query stats if a timestamp is given' do
++      start_time = 10.minutes.ago
++      stats = @db.queries(start_time)
++
++      expect(stats).to be_an Array
++      expect(DateTime.parse(stats.first.query_start).to_f).to be > start_time.to_f
++    end
++  end
++
++end
+diff --git a/spec/models/postgresql/database_table_spec.rb b/spec/models/postgresql/database_table_spec.rb
+new file mode 100644
+index 0000000..362a959
+--- /dev/null
++++ b/spec/models/postgresql/database_table_spec.rb
+@@ -0,0 +1,45 @@
++require 'rails_helper'
++
++RSpec.describe PostgreSQL::DatabaseTable, type: :model do
++
++  before :context do
++    @db = PostgreSQL::Database.new(name: 'booktown', deployment:
++        PostgreSQL::Deployment.new(
++            type: 'postgresql',
++            host: 'localhost',
++            port: 5432,
++            name: 'funky-deployment-9',
++            account_id: 1337
++        ))
++
++    @table = PostgreSQL::DatabaseTable.new(name: 'books', database: @db, schema: 'public')
++  end
++
++
++  describe '#columns' do
++
++    it 'should return table column information in Array' do
++      expect(@table.columns).to be_an Array
++    end
++
++  end
++
++
++  describe '#schema and #default_schema' do
++
++    it 'should have a prefix schema name if other than default' do
++      @table.schema = 'myschema'
++      expect(@table.schema_name).to eq 'myschema.books'
++    end
++
++    it 'hides default schema name' do
++      @table.schema = 'public'
++      expect(@table.default_schema).to be_nil
++
++      @table.schema = 'myschema'
++      expect(@table.default_schema).to eq 'myschema'
++    end
++
++  end
++
++end
+diff --git a/spec/models/postgresql/deployment_spec.rb b/spec/models/postgresql/deployment_spec.rb
+new file mode 100644
+index 0000000..c6e8bb0
+--- /dev/null
++++ b/spec/models/postgresql/deployment_spec.rb
+@@ -0,0 +1,20 @@
++require 'rails_helper'
++
++RSpec.describe PostgreSQL::Deployment, type: :model do
++
++  let (:dbs) do
++    PostgreSQL::Deployment.new(
++        type: 'postgresql',
++        host: 'localhost',
++        port: 5432,
++        name: 'funky-deployment-9',
++        account_id: 1337
++    ).databases
++  end
++
++  it 'returns a list of databases of a deployment including booktown db' do
++    expect(dbs.map(&:name)).to include('booktown')
++  end
++
++
++end
+-- 
+2.6.4
+

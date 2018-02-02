@@ -1,0 +1,16 @@
+= render partial: 'postgresql/databases/header'
+= render partial: 'postgresql/databases/nav'
+
+- main_header 'Tables'
+
+- main
+  .wide
+    .box-table
+      .table-head
+        .table-row
+          .table-cell Name
+          .table-cell Rows
+      - tables.each do |table|
+        .table-row
+          .table-cell = link_to table.schema_name, postgresql_database_table_path(table_name: table.name, schema: table.default_schema)
+          .table-cell = table.rows_count

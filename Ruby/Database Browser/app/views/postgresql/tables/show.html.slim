@@ -1,0 +1,16 @@
+= render partial: 'postgresql/databases/header'
+= render partial: 'postgresql/databases/nav'
+
+- main_header 'Columns'
+
+- main
+  .wide
+    .box-table
+      .table-head
+        .table-row
+          .table-cell Name
+          .table-cell Data Type
+      - columns.each do |column|
+        .table-row
+          .table-cell = column.name
+          .table-cell = column.data_type

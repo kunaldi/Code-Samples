@@ -1,0 +1,60 @@
+= render partial: 'postgresql/databases/header'
+= render partial: 'postgresql/databases/nav'
+
+- main_header
+  = hidden_field_tag 'last_query_timestamp', lq_timestamp
+  input data-toggle-class="primary-btn; .test-button" id="lq-toggle" type="checkbox" checked=true
+  label for="lq-toggle"
+  h2 style="display: inline" Live Queries
+
+- main
+  .wide
+    .box-table
+      .table-head
+        .table-row
+          .table-cell Pid
+          .table-cell Query Start
+          .table-cell Query
+          .table-cell App Name
+      .table-body#live-queries
+        = render partial: 'queries', object: queries
+
+javascript:
+  var timeout = 0;
+
+  $(document).ready(function() {
+    update_live_query();
+
+    $('#lq-toggle').click(update_live_query);
+  });
+
+  function fetch_new_queries() {
+    $.ajax({
+      url: '#{postgresql_database_live_queries_path}',
+      data: {
+        lq_timestamp: get_last_query_timestamp()
+      },
+      success: function (xhr) {
+        $(xhr.queries).prependTo('#live-queries').hide().fadeIn(2000);
+        set_last_query_timestamp(xhr.lq_timestamp);
+      },
+      complete: function() {
+        update_live_query();
+      }
+    });
+  }
+
+  function get_last_query_timestamp() {
+    return $('#last_query_timestamp').val();
+  }
+
+  function set_last_query_timestamp(val) {
+    $('#last_query_timestamp').val(val);
+  }
+
+  function update_live_query() {
+    clearTimeout(timeout);
+
+    if ($('#lq-toggle').is(':checked'))
+      timeout = setTimeout(fetch_new_queries, 3000);
+  }
